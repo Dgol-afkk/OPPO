@@ -61,3 +61,20 @@ with open(filename, 'r', encoding='utf-8') as file:
 
 for obj in objects_list:
     print(obj)
+
+objects_list.sort(key=lambda x: x.datee)
+print("\nСортировка по дате")
+for obj in objects_list:
+    print(obj)
+
+start_cost = int(input("\nВведите начальную стоимость для фильтрации: "))
+end_cost = int(input("Введите конечную стоимость для фильтрации: "))
+
+filtered_list = [obj for obj in objects_list if start_cost <= obj.cost <= end_cost]
+
+print(f"\nОбъекты со стоимостью в диапазоне от {start_cost} до {end_cost}")
+if filtered_list:
+    for obj in filtered_list:
+        print(obj)
+else:
+    print("В указанном диапазоне стоимости объектов не найдено.")
