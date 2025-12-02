@@ -1,7 +1,6 @@
 import pytest
 from datetime import datetime
-from script1 import parse, Property
-
+from script1 import parse, Property, filter_by_cost
 
 class TestParser:
 
@@ -44,3 +43,50 @@ class TestPropertyValidation:
         with pytest.raises(ValueError):
             Property(iCost=100, sOwner="   ", dtRegDate=datetime.now())
 
+
+class TestBusinessLogic:
+
+    @pytest.fixture
+    def properties_list(self):
+        return [
+            Property(iCost=5_400_000, sOwner="Min Price Owner", dtRegDate=datetime(2020, 1, 1)),
+            Property(iCost=30_000_000, sOwner="Middle Price Owner", dtRegDate=datetime(2023, 6, 15)),
+            Property(iCost=67_000_000, sOwner="Max Price Owner", dtRegDate=datetime(2021, 12, 31)),
+        ]
+
+    def test_filter_exact_min_boundary(self, properties_list):
+        result = filter_by_cost(properties_list, 5_400_000, 5_400_000)
+        assert len(result) == 1
+        assert result[0].sOwner == "Min Price Owner"
+        assert result[0].iCost == 5_400_000
+
+    def test_filter_exact_max_boundary(self, properties_list):
+        result = filter_by_cost(properties_list, 60_000_000, 67_000_000)
+
+        assert len(result) == 1
+        assert result[0].sOwner == "Max Price Owner"
+        assert result[0].iCost == 67_000_000
+
+    def test_filter_middle_range(self, properties_list):
+        result = filter_by_cost(properties_list, 10_000_000, 50_000_000)
+
+        assert len(result) == 1
+        assert result[0].sOwner == "Middle Price Owner"
+
+    def test_filter_below_minimum(self, properties_list):
+        result = filter_by_cost(properties_list, 0, 5_000_000)
+        assert len(result) == 0
+
+    def test_filter_all_inclusive(self, properties_list):
+        result = filter_by_cost(properties_list, 5_000_000, 70_000_000)
+        assert len(result) == 3
+
+    def test_sorting_by_date_descending(self, properties_list):
+        properties_list.sort(key=lambda prop: prop.dtRegDate, reverse=True)
+
+        assert properties_list[0].dtRegDate.year == 2023
+        assert properties_list[0].sOwner == "Middle Price Owner"
+        assert properties_list[1].dtRegDate.year == 2021
+        assert properties_list[1].sOwner == "Max Price Owner"
+        assert properties_list[2].dtRegDate.year == 2020
+        assert properties_list[2].sOwner == "Min Price Owner"
