@@ -1,5 +1,6 @@
-import re
+import abc
 import os
+import re
 from datetime import datetime
 from typing import List, Optional, Tuple
 
@@ -7,148 +8,171 @@ DATA_FILENAME = "data.txt"
 
 
 class Property:
-    def __init__(self, iCost: int, sOwner: str, dtRegDate: datetime):
-        if not isinstance(iCost, int) or iCost < 0:
-            raise ValueError("Стоимость (iCost) должна быть положительным целым числом")
 
-        if not isinstance(sOwner, str) or not sOwner.strip():
-            raise ValueError("Владелец (sOwner) должен быть непустой строкой")
+    def __init__(self, cost: int, owner: str, reg_date: datetime):
+        if not isinstance(cost, int) or cost < 0:
+            raise ValueError("Стоимость должна быть положительным целым числом.")
+        if not isinstance(owner, str) or not owner.strip():
+            raise ValueError("Владелец должен быть непустой строкой.")
+        if not isinstance(reg_date, datetime):
+            raise TypeError("Дата должна быть объектом datetime.")
 
-        if not isinstance(dtRegDate, datetime):
-            raise TypeError("Дата (dtRegDate) должна быть объектом datetime")
-
-
-        self.iCost = iCost
-        self.sOwner = sOwner
-        self.dtRegDate = dtRegDate
+        self.cost = cost
+        self.owner = owner
+        self.reg_date = reg_date
 
     def __str__(self) -> str:
-        return (f"Недвижимость: "
-                f"{self.sOwner} "
-                f"{self.dtRegDate.strftime('%Y.%m.%d')} "
-                f"{self.iCost} руб.")
+        return (f"Недвижимость: {self.owner} | "
+                f"{self.reg_date.strftime('%Y.%m.%d')} | "
+                f"{self.cost} руб.")
 
-
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, Property):
             return False
-        return (self.iCost == other.iCost and
-                self.sOwner == other.sOwner and
-                self.dtRegDate == other.dtRegDate)
+        return (self.cost == other.cost and
+                self.owner == other.owner and
+                self.reg_date == other.reg_date)
 
 
-def parse(line: str) -> Optional[Property]:
+class PropertyReader(abc.ABC):
 
-    patterns = {
-        'owner': r'"([^"]*)"',
-        'date': r'(\d{4}\.\d{2}\.\d{2})',
-        'cost': r'(?<!\.)\b(\d+)\b(?!\.)'
-    }
+    @abc.abstractmethod
+    def read(self) -> List[Property]:
+        pass
 
-    owner_match = re.search(patterns['owner'], line)
-    date_match = re.search(patterns['date'], line)
-    cost_match = re.search(patterns['cost'], line)
 
-    if owner_match and date_match and cost_match:
+class FilePropertyReader(PropertyReader):
+    def __init__(self, filename: str):
+        self._filename = filename
+
+        self._patterns = {
+            'owner': re.compile(r'"([^"]*)"'),
+            'date': re.compile(r'(\d{4}\.\d{2}\.\d{2})'),
+            'cost': re.compile(r'(?<!\.)\b(\d+)\b(?!\.)')
+        }
+
+    def _parse_line(self, line: str) -> Optional[Property]:
+        owner_match = self._patterns['owner'].search(line)
+        date_match = self._patterns['date'].search(line)
+        cost_match = self._patterns['cost'].search(line)
+
+        if owner_match and date_match and cost_match:
+            try:
+                date_str = date_match.group(1)
+                reg_date = datetime.strptime(date_str, '%Y.%m.%d')
+
+                return Property(
+                    cost=int(cost_match.group(1)),
+                    owner=owner_match.group(1).strip(),
+                    reg_date=reg_date
+                )
+            except (ValueError, TypeError):
+                return None
+        return None
+
+    def read(self) -> List[Property]:
+        if not os.path.exists(self._filename):
+            print(f"Ошибка: файл '{self._filename}' не найден.")
+            return []
+
+        properties = []
         try:
-            date_str = date_match.group(1)
-            reg_date = datetime.strptime(date_str, '%Y.%m.%d')
+            with open(self._filename, 'r', encoding='utf-8') as file:
+                for line in file:
+                    if line.strip():
+                        parsed_object = self._parse_line(line.strip())
+                        if parsed_object:
+                            properties.append(parsed_object)
+        except IOError as e:
+            print(f"Ошибка при чтении файла: {e}")
+            return []
 
-            return Property(
-                iCost=int(cost_match.group(1)),
-                sOwner=owner_match.group(1).strip(),
-                dtRegDate=reg_date
-            )
-        except (ValueError, TypeError):
-            return None
-
-    return None
-
-def load(filename: str) -> List[Property]:
-    if not os.path.exists(filename):
-        print(f"Ошибка: файл '{filename}' не найден. Убедитесь, что он существует.")
-        return []
-
-    properties = []
-
-    with open(filename, 'r', encoding='utf-8') as file:
-            for line in file:
-                if line.strip():
-                    parsed_object = parse(line.strip())
-                    if parsed_object:
-                        properties.append(parsed_object)
-
-    return properties
+        return properties
 
 
-def filter_min_max() -> Tuple[int, int]:
-    while True:
-        min_price_str = input("Введите минимальную стоимость: ")
-        if min_price_str.isdigit():
-            min_price = int(min_price_str)
-            break
-        else:
+class PropertyService:
+    def __init__(self, reader: PropertyReader):
+        self._reader = reader
+        self._properties: List[Property] = []
+
+    def load_data(self) -> None:
+        self._properties = self._reader.read()
+
+    def get_all_sorted_by_date(self) -> List[Property]:
+        return sorted(self._properties, key=lambda p: p.reg_date, reverse=True)
+
+    def filter_by_cost(self, min_cost: int, max_cost: int) -> List[Property]:
+        return [
+            p for p in self._properties
+            if min_cost <= p.cost <= max_cost
+        ]
+
+    def has_data(self) -> bool:
+        return len(self._properties) > 0
+
+
+class ConsoleUI:
+
+    def __init__(self, service: PropertyService):
+        self._service = service
+
+    def _get_valid_int_input(self, prompt: str) -> int:
+        while True:
+            value = input(prompt)
+            if value.isdigit():
+                return int(value)
             print("Ошибка: введите целое положительное число.")
 
-    while True:
-        max_price_str = input("Введите максимальную стоимость: ")
-        if max_price_str.isdigit():
-            max_price = int(max_price_str)
-            if max_price < min_price:
-                print("Ошибка: максимальная стоимость не может быть меньше минимальной.")
-                continue
-            break
+    def _get_price_range(self) -> Tuple[int, int]:
+        min_price = self._get_valid_int_input("Введите минимальную стоимость: ")
+
+        while True:
+            max_price = self._get_valid_int_input("Введите максимальную стоимость: ")
+            if max_price >= min_price:
+                return min_price, max_price
+            print("Ошибка: максимальная стоимость не может быть меньше минимальной.")
+
+    def _display_list(self, properties: List[Property], title: str) -> None:
+        print(title)
+        if not properties:
+            print("Список пуст.")
         else:
-            print("Ошибка: введите целое положительное число.")
+            for prop in properties:
+                print(prop)
 
-    return min_price, max_price
+    def run(self) -> None:
+        self._service.load_data()
 
+        if not self._service.has_data():
+            print("Не удалось загрузить данные или список пуст.")
+            return
 
-def filter_by_cost(properties: List[Property], min_cost: int, max_cost: int) -> List[Property]:
-    filtered_list = []
-    for obj in properties:
-        if min_cost <= obj.iCost <= max_cost:
-            filtered_list.append(obj)
-    return filtered_list
+        while True:
+            print("\n--- Меню ---")
+            print("1. Показать все объекты (по дате)")
+            print("2. Отфильтровать по стоимости")
+            print("3. Выход")
+            choice = input("Выберите действие: ")
 
-
-def display_properties(properties: List[Property], title: str) -> None:
-    print(title)
-    if not properties:
-        print("В списке нет объектов, соответствующих критериям.")
-    else:
-        for prop in properties:
-            print(prop)
+            if choice == '1':
+                data = self._service.get_all_sorted_by_date()
+                self._display_list(data, "\n--- Полный список ---")
+            elif choice == '2':
+                min_p, max_p = self._get_price_range()
+                data = self._service.filter_by_cost(min_p, max_p)
+                self._display_list(data, f"\n--- Объекты от {min_p} до {max_p} ---")
+            elif choice == '3':
+                print("Выход.")
+                break
+            else:
+                print("Неверный выбор.")
 
 
 def main() -> None:
-    all_properties = load(DATA_FILENAME)
-
-    if not all_properties:
-        print("\nНе удалось загрузить данные или файл пуст.")
-        return
-
-    while True:
-        print("\n--- Меню ---")
-        print("1. Показать все объекты")
-        print("2. Отфильтровать по стоимости")
-        print("3. Выход")
-
-        choice = input("Выберите действие: ")
-
-        if choice == '1':
-            all_properties.sort(key=lambda prop: prop.dtRegDate, reverse=True)
-            display_properties(all_properties, "\n--- Полный список ---")
-        elif choice == '2':
-            min_price, max_price = filter_min_max()
-            filtered = filter_by_cost(all_properties, min_price, max_price)
-            display_properties(filtered, f"\n--- Объекты от {min_price} до {max_price} ---")
-        elif choice == '3':
-            print("Выход.")
-            break
-        else:
-            print("Неверный выбор.")
-
+    file_reader = FilePropertyReader(DATA_FILENAME)
+    service = PropertyService(file_reader)
+    app = ConsoleUI(service)
+    app.run()
 
 if __name__ == "__main__":
     main()
